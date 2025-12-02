@@ -1,10 +1,11 @@
 <?php
+
 namespace FarhanIsrakYen\LaravelModelMaker;
 
 use Illuminate\Support\ServiceProvider;
-use FarhanIsrakYen\LaravelModelMaker\Commands\MakeModelCommand.php
+use FarhanIsrakYen\LaravelModelMaker\Commands\MakeModelCommand;
 
-class ServiceProvider extends ServiceProvider
+class LaravelModelMakerServiceProvider extends ServiceProvider
 {
     public function register()
     {
@@ -18,5 +19,3 @@ class ServiceProvider extends ServiceProvider
         //
     }
 }
-
-
