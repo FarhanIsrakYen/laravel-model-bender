@@ -1,5 +1,5 @@
 {
-    "name": "farhanisrakyen/laravel-model-maker",
+    "name": "farhanisrakyen/laravel-model-bender",
     "description": "Interactive Laravel model generator with fields, enums, casts, and relationships",
     "type": "library",
     "license": "MIT",
