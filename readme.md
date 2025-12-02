@@ -11,7 +11,7 @@ A Laravel package to interactively generate Eloquent models with fields, enums, 
 Once the package is published to Packagist, you can install it in your Laravel project:
 
 ```bash
-composer require your-vendor/laravel-model-maker
+composer require farhanisrakyen/laravel-model-bender
 ```
 
 ### 2. Optional: Publish vendor assets (if applicable)
