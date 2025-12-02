@@ -1,5 +1,5 @@
 <?php
-namespace YourVendor\LaravelEntityMaker;
+namespace FarhanIsrakYen\LaravelEntityMaker;
 
 use Illuminate\Support\ServiceProvider;
 use FarhanIsrakYen\LaravelModelMaker\Commands\MakeModelCommand.php
@@ -18,3 +18,4 @@ class ServiceProvider extends ServiceProvider
         //
     }
 }
+
