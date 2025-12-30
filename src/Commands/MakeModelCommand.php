@@ -374,21 +374,20 @@ PHP;
         * Fields
         * -------------------------------------- */
         foreach ($newFields as $f) {
+            $upLine = "            if (!Schema::hasColumn('{$table}', '{$f['name']}')) { ";
+
             if ($f['type'] === 'enum') {
                 $vals = "['" . implode("','", $f['enum']) . "']";
-                $up[] =
-                    "            \$table->enum('{$f['name']}', {$vals})"
-                    . ($f['nullable'] ? '->nullable()' : '')
-                    . ($f['unique'] ? '->unique()' : '')
-                    . ";";
+                $upLine .= "\$table->enum('{$f['name']}', {$vals})";
             } else {
-                $up[] =
-                    "            \$table->{$f['type']}('{$f['name']}')"
-                    . ($f['nullable'] ? '->nullable()' : '')
-                    . ($f['unique'] ? '->unique()' : '')
-                    . ";";
+                $upLine .= "\$table->{$f['type']}('{$f['name']}')";
             }
 
+            $upLine .= ($f['nullable'] ? '->nullable()' : '')
+                . ($f['unique'] ? '->unique()' : '')
+                . "; }";
+
+            $up[] = $upLine;
             $down[] = "            if (Schema::hasColumn('{$table}', '{$f['name']}')) { \$table->dropColumn('{$f['name']}'); }";
         }
 
@@ -396,27 +395,20 @@ PHP;
         * Relationships
         * -------------------------------------- */
         foreach ($newRelationships as $r) {
-
             if ($r['type'] === 'belongsTo') {
                 $fk = Str::snake(class_basename($r['model'])) . '_id';
-
-                $up[] =
-                    "            if (!Schema::hasColumn('{$table}', '{$fk}')) { " .
-                    "\$table->foreignId('{$fk}')->constrained()->cascadeOnDelete(); }";
-
-                $down[] =
-                    "            if (Schema::hasColumn('{$table}', '{$fk}')) { " .
-                    "\$table->dropForeign(['{$fk}']); \$table->dropColumn('{$fk}'); }";
+                $up[] = "            if (!Schema::hasColumn('{$table}', '{$fk}')) { "
+                    . "\$table->foreignId('{$fk}')->constrained()->cascadeOnDelete(); }";
+                $down[] = "            if (Schema::hasColumn('{$table}', '{$fk}')) { "
+                    . "\$table->dropForeign(['{$fk}']); \$table->dropColumn('{$fk}'); }";
             }
 
             if (in_array($r['type'], ['morphOne', 'morphMany'])) {
                 $morph = Str::snake($r['name']);
-
-                $up[] = "            \$table->morphs('{$morph}');";
-
-                $down[] =
-                    "            if (Schema::hasColumn('{$table}', '{$morph}_id')) { " .
-                    "\$table->dropMorphs('{$morph}'); }";
+                $up[] = "            if (!Schema::hasColumn('{$table}', '{$morph}_id')) { "
+                    . "\$table->morphs('{$morph}'); }";
+                $down[] = "            if (Schema::hasColumn('{$table}', '{$morph}_id')) { "
+                    . "\$table->dropMorphs('{$morph}'); }";
             }
         }
 
@@ -427,7 +419,12 @@ PHP;
             $colList = "['" . implode("','", $cols) . "']";
             $indexName = $table . '_' . implode('_', $cols) . '_index';
 
-            $up[] = "            \$table->index({$colList}, '{$indexName}');";
+            $conditions = array_map(fn($col) => "Schema::hasColumn('{$table}', '{$col}')", $cols);
+            $conditionCheck = implode(' && ', $conditions);
+
+            $up[] = "            if ({$conditionCheck}) { \$table->index({$colList}, '{$indexName}'); }";
+
+            // Down: Drop if index exists (Laravel doesn't have hasIndex, so we drop blindly — it fails silently if missing)
             $down[] = "            \$table->dropIndex('{$indexName}');";
         }
 
@@ -443,29 +440,29 @@ PHP;
         $downBody = implode("\n", array_reverse($down)); // reverse for safety
 
         $stub = <<<PHP
-    <?php
-
-    use Illuminate\\Database\\Migrations\\Migration;
-    use Illuminate\\Database\\Schema\\Blueprint;
-    use Illuminate\\Support\\Facades\\Schema;
-
-    return new class extends Migration
-    {
-        public function up(): void
-        {
-            Schema::table('{$table}', function (Blueprint \$table) {
-    {$upBody}
-            });
-        }
-
-        public function down(): void
-        {
-            Schema::table('{$table}', function (Blueprint \$table) {
-    {$downBody}
-            });
-        }
-    };
-    PHP;
+            <?php
+            
+            use Illuminate\\Database\\Migrations\\Migration;
+            use Illuminate\\Database\\Schema\\Blueprint;
+            use Illuminate\\Support\\Facades\\Schema;
+            
+            return new class extends Migration
+            {
+                public function up(): void
+                {
+                    Schema::table('{$table}', function (Blueprint \$table) {
+            {$upBody}
+                    });
+                }
+            
+                public function down(): void
+                {
+                    Schema::table('{$table}', function (Blueprint \$table) {
+            {$downBody}
+                    });
+                }
+            };
+            PHP;
 
         $this->files->put($path, $stub);
         $this->info("✔ Alter migration created: {$migrationName}");
