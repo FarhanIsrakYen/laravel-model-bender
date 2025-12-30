@@ -230,9 +230,30 @@ class MakeModelCommand extends Command
             }
 
             $relModelRaw = $this->ask('Related model class (e.g. User or App\\Models\\User)');
+            if (empty($relModelRaw)) {
+                $this->warn('No model provided — skipping.');
+                continue;
+            }
+
             $relModel = Str::contains($relModelRaw, '\\')
                 ? $relModelRaw
                 : 'App\\Models\\' . str_replace('/', '\\', $relModelRaw);
+
+            $modelShortName = class_basename($relModel);
+            $expectedPath = app_path('Models/' . str_replace(['App\\Models\\', '\\'], ['', '/'], $relModel) . '.php');
+
+            $modelExists = $this->files->exists($expectedPath);
+
+            if (!$modelExists) {
+                $this->warn("Warning: Model '{$modelShortName}' does not exist at:");
+                $this->line("    {$expectedPath}");
+                $this->line("<fg=yellow>It may cause errors if the model is not created later.</>");
+
+                if (!$this->confirm("Continue anyway? (yes if you'll create the model soon)", true)) {
+                    $this->line("Skipping this relationship.");
+                    continue;
+                }
+            }
 
             $relType = $this->choice('Relation type', [
                 'hasOne','hasMany','belongsTo','belongsToMany',
@@ -250,6 +271,8 @@ class MakeModelCommand extends Command
                 'type' => $relType,
                 'pivot' => $createPivot,
             ];
+
+            $this->info("Relationship '{$relName}' → {$relType} {$modelShortName} added.");
         }
     }
 
@@ -375,20 +398,36 @@ PHP;
 
     protected function extractArrayFromModel(string $contents, string $prop): array
     {
-        // captures protected $prop = [ ... ];
+        if ($prop === 'casts') {
+            $pattern = '/protected\s+function\s+casts\s*\(\)\s*:\s*array\s*\{[^}]*return\s*\[\s*([^\]]*)\s*\]\s*;\s*\}/s';
+            if (preg_match($pattern, $contents, $m)) {
+                $inner = trim($m[1]);
+                if ($inner === '') return [];
+
+                $pairs = preg_split('/,(?![^\[]*\])/', $inner);
+                $result = [];
+                foreach ($pairs as $p) {
+                    $p = trim($p);
+                    if ($p === '') continue;
+                    if (preg_match("/['\"]([^'\"]+)['\"]\s*=>\s*['\"]([^'\"]+)['\"]/", $p, $mm)) {
+                        $result[$mm[1]] = $mm[2];
+                    }
+                }
+                return $result;
+            }
+        }
+
         $pattern = '/protected\s+\$' . preg_quote($prop, '/') . '\s*=\s*\[([^\]]*)\]\s*;/m';
         if (preg_match($pattern, $contents, $m)) {
             $inner = trim($m[1]);
             if ($inner === '') return [];
-            // handle associative casts
             if ($prop === 'casts') {
                 $pairs = preg_split('/,(?![^\[]*\])/m', $inner);
                 $result = [];
                 foreach ($pairs as $p) {
                     $p = trim($p);
                     if ($p === '') continue;
-                    // 'key' => 'value'
-                    if (preg_match('/[\'"]([^\'"]+)[\'"]\s*=>\s*[\'"]([^\'"]+)[\'"]/', $p, $mm)) {
+                    if (preg_match("/['\"]([^'\"]+)['\"]\s*=>\s*['\"]([^'\"]+)['\"]/", $p, $mm)) {
                         $result[$mm[1]] = $mm[2];
                     }
                 }
@@ -407,7 +446,6 @@ PHP;
             return $values;
         }
 
-        // not found — return defaults
         return [];
     }
 
@@ -422,29 +460,78 @@ PHP;
      */
     protected function replaceArrayInModel(string $contents, string $prop, array $values, bool $associative = false): string
     {
-        if ($associative) {
-            $inner = '';
-            foreach ($values as $k => $v) {
-                $inner .= "        '" . $k . "' => '" . $v . "',\n";
+        $inner = '';
+        foreach ($values as $k => $v) {
+            if ($associative) {
+                $inner .= "        '{$k}' => '{$v}',\n";
+            } else {
+                $inner .= "        '{$v}',\n";
             }
-            $inner = rtrim($inner, "\n");
-            $replacement = "protected \$" . $prop . " = [\n" . $inner . "\n    ];";
+        }
+        $inner = rtrim($inner, ",\n");
+
+        if ($prop === 'casts') {
+            // === CASTS: Laravel 11+ uses method, older uses property ===
+            $isLaravel11 = $this->isLaravel11OrHigher();
+            $hasCastsMethod = preg_match('/protected\s+function\s+casts\s*\(\)\s*:\s*array/', $contents);
+            $useMethod = $isLaravel11 || $hasCastsMethod;
+
+            if ($useMethod) {
+                $replacement = empty($inner) ? '' : <<<PHP
+    protected function casts(): array
+    {
+        return [
+{$inner}
+        ];
+    }
+PHP;
+                $contents = preg_replace('/protected\s+\$casts\s*=\s*\[[^\]]*\][;\s]*/s', '', $contents);
+                if ($hasCastsMethod) {
+                    $pattern = '/protected\s+function\s+casts\s*\(\)\s*:\s*array\s*\{[^}]*return\s*\[[^\]]*\][^}]*\}/s';
+                    if (preg_match($pattern, $contents)) {
+                        $contents = preg_replace($pattern, $replacement, $contents);
+                    }
+                } else if (!empty($inner)) {
+                    $contents = preg_replace(
+                        '/(class\s+\w+\s+extends\s+\w+\s*\{)/',
+                        "$1\n\n{$replacement}\n",
+                        $contents,
+                        1
+                    );
+                }
+            } else {
+                // Laravel ≤10: use property
+                $replacement = empty($inner) ? '' : "protected \$casts = [\n{$inner}\n    ];";
+
+                $contents = preg_replace('/protected\s+function\s+casts\s*\(\)\s*:\s*array[^}]*\}[^\n]*\n/s', '', $contents);
+
+                $pattern = '/protected\s+\$casts\s*=\s*\[[^\]]*\][;\s]*/s';
+                if (preg_match($pattern, $contents)) {
+                    $contents = preg_replace($pattern, $replacement, $contents, 1);
+                } else if (!empty($inner)) {
+                    $contents = preg_replace(
+                        '/(class\s+\w+\s+extends\s+\w+\s*\{)/',
+                        "$1\n    {$replacement}\n",
+                        $contents,
+                        1
+                    );
+                }
+            }
         } else {
-            $inner = '';
-            foreach ($values as $v) {
-                $inner .= "        '" . $v . "',\n";
+            $replacement = empty($inner) ? '' : "protected \${$prop} = [\n{$inner}\n    ];";
+
+            $pattern = '/protected\s+\$' . preg_quote($prop, '/') . '\s*=\s*\[[^\]]*\][;\s]*/s';
+            if (preg_match($pattern, $contents)) {
+                $contents = preg_replace($pattern, $replacement, $contents, 1);
+            } else if (!empty($inner)) {
+                $contents = preg_replace(
+                    '/(class\s+\w+\s+extends\s+\w+\s*\{)/',
+                    "$1\n    {$replacement}\n",
+                    $contents,
+                    1
+                );
             }
-            $inner = rtrim($inner, "\n");
-            $replacement = "protected \$" . $prop . " = [\n" . $inner . "\n    ];";
         }
-
-        $pattern = '/protected\s+\$' . preg_quote($prop, '/') . '\s*=\s*\[[^\]]*\]\s*;/m';
-        if (preg_match($pattern, $contents)) {
-            return preg_replace($pattern, $replacement, $contents, 1);
-        }
-
-        // property not present — place it after class declaration (after the opening brace)
-        $contents = preg_replace('/class\s+[^{]+{\s*/', "$0\n    " . $replacement . "\n\n", $contents, 1);
         return $contents;
     }
 
@@ -471,14 +558,13 @@ PHP;
             if ($f['type'] === 'enum') {
                 $vals = "['" . implode("','", $f['enum']) . "']";
                 $upLine .= "\$table->enum('{$f['name']}', {$vals})";
+            } else if ($f['type'] === 'decimal') {
+                $upLine .= "\$table->decimal('{$f['name']}', 8, 2)";
             } else {
                 $upLine .= "\$table->{$f['type']}('{$f['name']}')";
             }
 
-            $upLine .= ($f['nullable'] ? '->nullable()' : '')
-                . ($f['unique'] ? '->unique()' : '')
-                . "; }";
-
+            $upLine .= "; }";
             $up[] = $upLine;
             $down[] = "            if (Schema::hasColumn('{$table}', '{$f['name']}')) { \$table->dropColumn('{$f['name']}'); }";
         }
@@ -569,20 +655,19 @@ PHP;
         $lines = [];
 
         foreach ($fields as $f) {
+            $line = "            ";
             if ($f['type'] === 'enum') {
                 $vals = "['" . implode("','", $f['enum']) . "']";
-                $lines[] =
-                    "            \$table->enum('{$f['name']}', {$vals})"
-                    . ($f['nullable'] ? '->nullable()' : '')
-                    . ($f['unique'] ? '->unique()' : '')
-                    . ";";
+                $line .= "\$table->enum('{$f['name']}', {$vals})";
+            } else if ($f['type'] === 'decimal') {
+                $line .= "\$table->decimal('{$f['name']}', 8, 2)";
             } else {
-                $lines[] =
-                    "            \$table->{$f['type']}('{$f['name']}')"
+                $line .= "\$table->{$f['type']}('{$f['name']}')"
                     . ($f['nullable'] ? '->nullable()' : '')
-                    . ($f['unique'] ? '->unique()' : '')
-                    . ";";
+                    . ($f['unique'] ? '->unique()' : '');
             }
+            $line .= ";";
+            $lines[] = $line;
         }
 
         foreach ($relationships as $r) {
@@ -600,7 +685,8 @@ PHP;
 
         foreach ($indexes as $cols) {
             $colList = "['" . implode("','", $cols) . "']";
-            $lines[] = "            \$table->index({$colList});";
+            $indexName = $table . '_' . implode('_', $cols) . '_index';
+            $lines[] = " \$table->index({$colList}, '{$indexName}');";
         }
 
         $schema = implode("\n", $lines);
@@ -685,31 +771,62 @@ PHP;
         $guarded = [];
 
         foreach ($fields as $f) {
-            if (!empty($f['fillable'])) $fillable[] = "'{$f['name']}'";
-            if (!empty($f['hidden']))   $hidden[]   = "'{$f['name']}'";
-            if (!empty($f['append']))   $appends[]  = "'{$f['name']}'";
-            if (!empty($f['cast']))     $casts[]    = "'{$f['name']}' => '{$f['cast']}'";
-            if (empty($f['fillable']))  $guarded[]  = "'{$f['name']}'";
+            if (!empty($f['fillable'])) {
+                $fillable[] = "'{$f['name']}'";
+            }
+            if (!empty($f['hidden'])) {
+                $hidden[] = "'{$f['name']}'";
+            }
+            if (!empty($f['append'])) {
+                $appends[] = "'{$f['name']}'";
+            }
+            if (!empty($f['cast'])) {
+                $casts[] = "'{$f['name']}' => '{$f['cast']}'";
+            }
+            if (empty($f['fillable'])) {
+                $guarded[] = "'{$f['name']}'";
+            }
         }
 
         $guardedArr = empty($fillable) ? "['*']" : "[]";
-
         $fillableStr = implode(', ', $fillable);
         $hiddenStr   = implode(', ', $hidden);
         $appendsStr  = implode(', ', $appends);
-        $castsStr    = implode(",\n        ", $casts);
 
+        $castsBlock = '';
+        if (!empty($casts)) {
+            $castsInner = implode("\n        ", $casts);
+
+            if ($this->isLaravel11OrHigher()) {
+                $castsBlock = <<<PHP
+
+    protected function casts(): array
+    {
+        return [
+        {$castsInner}
+        ];
+    }
+PHP;
+            } else {
+                $castsBlock = <<<PHP
+
+    protected \$casts = [
+        {$castsInner}
+    ];
+PHP;
+            }
+        }
+
+        // Relationships
         $relationMethods = '';
         foreach ($relationships as $r) {
             $method = $r['name'];
             $model  = $r['model'];
             $type   = $r['type'];
 
-            if (!Str::startsWith($model, ['App\\', '\\'])) {
-                $modelFqn = 'App\\Models\\' . str_replace('/', '\\', $model);
-            } else {
-                $modelFqn = $model;
-            }
+            $modelFqn = Str::startsWith($model, ['App\\', '\\'])
+                ? $model
+                : 'App\\Models\\' . str_replace('/', '\\', $model);
 
             $relationMethods .= <<<PHP
 
@@ -717,7 +834,6 @@ PHP;
     {
         return \$this->{$type}({$modelFqn}::class);
     }
-
 PHP;
         }
 
@@ -734,14 +850,9 @@ class {$className} extends Model
 
     protected \$guarded = {$guardedArr};
 
-    protected \$casts = [
-        {$castsStr}
-    ];
-
     protected \$hidden = [{$hiddenStr}];
 
-    protected \$appends = [{$appendsStr}];
-{$relationMethods}
+    protected \$appends = [{$appendsStr}];{$castsBlock}{$relationMethods}
 }
 PHP;
     }
@@ -754,5 +865,11 @@ PHP;
         $directory = Str::contains($path, '/') ? Str::beforeLast($path, '/') : '';
         $modelDir = app_path('Models/' . ($directory ? $directory . '/' : ''));
         return $modelDir . $className . '.php';
+    }
+
+    protected function isLaravel11OrHigher(): bool
+    {
+        $laravel = app();
+        return version_compare($laravel::VERSION, '11.0', '>=');
     }
 }
