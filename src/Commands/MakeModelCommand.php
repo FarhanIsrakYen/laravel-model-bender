@@ -393,6 +393,7 @@ class MakeModelCommand extends Command
             $modelFqn = Str::startsWith($model, ['App\\', '\\']) ? $model : 'App\\Models\\' . str_replace('/', '\\', $model);
 
             $relationMethod = <<<PHP
+
     public function {$method}()
     {
         return \$this->{$type}({$modelFqn}::class);
@@ -492,6 +493,7 @@ PHP;
                 $castsInner = rtrim($castsInner, ",\n");
 
                 $replacement = <<<PHP
+
     protected function casts(): array
     {
         return [
@@ -808,6 +810,7 @@ PHP;
 
             if ($this->isLaravel11OrHigher()) {
                 $castsBlock = <<<PHP
+
     protected function casts(): array
     {
         return [
@@ -835,6 +838,7 @@ PHP;
                 : 'App\\Models\\' . str_replace('/', '\\', $model);
 
             $relationMethods .= <<<PHP
+
     public function {$method}()
     {
         return \$this->{$type}({$modelFqn}::class);
