@@ -499,62 +499,62 @@ PHP;
         }
         $inner = rtrim($inner, ",\n");
 
+        $replacement = "protected \${$prop} = [\n{$inner}\n    ];";
         if ($prop === 'casts') {
-            // === CASTS: Laravel 11+ uses method, older uses property ===
             $isLaravel11 = $this->isLaravel11OrHigher();
             $hasCastsMethod = preg_match('/protected\s+function\s+casts\s*\(\)\s*:\s*array/', $contents);
             $useMethod = $isLaravel11 || $hasCastsMethod;
 
             if ($useMethod) {
-                $replacement = empty($inner) ? '' : <<<PHP
+                $castsInner = '';
+                foreach ($values as $k => $v) {
+                    $castsInner .= "        '{$k}' => '{$v}',\n";
+                }
+                $castsInner = rtrim($castsInner, ",\n");
+
+                $replacement = <<<PHP
+
     protected function casts(): array
     {
         return [
-{$inner}
+{$castsInner}
         ];
     }
 PHP;
                 $contents = preg_replace('/protected\s+\$casts\s*=\s*\[[^\]]*\][;\s]*/s', '', $contents);
                 if ($hasCastsMethod) {
-                    $pattern = '/protected\s+function\s+casts\s*\(\)\s*:\s*array\s*\{[^}]*return\s*\[[^\]]*\][^}]*\}/s';
-                    if (preg_match($pattern, $contents)) {
-                        $contents = preg_replace($pattern, $replacement, $contents);
-                    }
-                } else if (!empty($inner)) {
+                    $pattern = '/protected\s+function\s+casts\s*\(\)\s*:\s*array\s*\{[^}]*\}/s';
+                    $contents = preg_replace($pattern, $replacement, $contents);
+                } else {
                     $contents = preg_replace(
-                        '/(class\s+\w+\s+extends\s+\w+\s*\{)/',
-                        "$1\n\n{$replacement}\n",
+                        '/(class\s+[^{]+\{)/',
+                        "$1\n{$replacement}\n",
                         $contents,
                         1
                     );
                 }
             } else {
-                // Laravel ≤10: use property
-                $replacement = empty($inner) ? '' : "protected \$casts = [\n{$inner}\n    ];";
-
-                $contents = preg_replace('/protected\s+function\s+casts\s*\(\)\s*:\s*array[^}]*\}[^\n]*\n/s', '', $contents);
-
+                $replacement = "protected \$casts = [\n{$inner}\n    ];";
+                $contents = preg_replace('/protected\s+function\s+casts[^}]*\}/s', '', $contents);
                 $pattern = '/protected\s+\$casts\s*=\s*\[[^\]]*\][;\s]*/s';
                 if (preg_match($pattern, $contents)) {
-                    $contents = preg_replace($pattern, $replacement, $contents, 1);
-                } else if (!empty($inner)) {
+                    $contents = preg_replace($pattern, "\n    {$replacement}\n", $contents, 1);
+                } else {
                     $contents = preg_replace(
-                        '/(class\s+\w+\s+extends\s+\w+\s*\{)/',
-                        "$1\n    {$replacement}\n",
+                        '/(class\s+[^{]+\{)/',
+                        "$1\n\n    {$replacement}\n",
                         $contents,
                         1
                     );
                 }
             }
         } else {
-            $replacement = empty($inner) ? '' : "protected \${$prop} = [\n{$inner}\n    ];";
-
             $pattern = '/protected\s+\$' . preg_quote($prop, '/') . '\s*=\s*\[[^\]]*\][;\s]*/s';
             if (preg_match($pattern, $contents)) {
                 $contents = preg_replace($pattern, "\n    {$replacement}\n", $contents, 1);
-            } else if (!empty($inner)) {
+            } else {
                 $contents = preg_replace(
-                    '/(class\s+\w+\s+extends\s+\w+\s*\{)/',
+                    '/(class\s+[^{]+\{)/',
                     "$1\n\n    {$replacement}\n",
                     $contents,
                     1
