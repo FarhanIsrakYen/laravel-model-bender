@@ -591,10 +591,17 @@ PHP;
                 $upLine .= "\$table->{$f['type']}('{$f['name']}')";
 
                 if ($f['type'] === 'boolean' && !$f['nullable']) {
-                    $upLine .= "->default(true)";
+                    $line .= "->default(true)";
+                }
+
+                if ($f['unique']) {
+                    $line .= "->unique()";
                 }
             }
 
+            if ($f['unique']) {
+                $upLine .= "->unique()";
+            }
             $upLine .= "; }";
             $up[] = $upLine;
             $down[] = "            if (Schema::hasColumn('{$table}', '{$f['name']}')) { \$table->dropColumn('{$f['name']}'); }";
