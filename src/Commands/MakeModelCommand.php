@@ -104,7 +104,7 @@ class MakeModelCommand extends Command
 
         foreach ($this->relationships as $r) {
             if ($r['pivot']) {
-                sleep(1);
+                usleep(500000);
                 $this->generatePivotMigration($className, $r['model'], $r['type']);
             }
         }
@@ -213,6 +213,15 @@ class MakeModelCommand extends Command
         $this->info("\n=== Define relationships ===");
         while ($this->confirm('Add a relationship?', false)) {
             $relName = trim($this->ask('Method name for relationship'));
+            if ($this->modelHasMethod($relName)) {
+                $this->warn("Relationship method '{$relName}' already exists in the model.");
+
+                if (!$this->confirm('Do you want to continue anyway?', false)) {
+                    $this->line("Skipping relationship '{$relName}'.");
+                    continue;
+                }
+            }
+
             if ($relName === '') {
                 $this->warn('Empty relation name — skipping.');
                 continue;
@@ -382,8 +391,9 @@ class MakeModelCommand extends Command
 
         foreach ($newRelationships as $r) {
             $method = $r['name'];
-            if (preg_match('/function\s+' . preg_quote($method) . '\s*\(/', $contents)) {
-                $this->info("Method {$method} already exists in model — skipping method injection.");
+            $pattern = '/public\s+function\s+' . preg_quote($method, '/') . '\s*\(/';
+            if (preg_match($pattern, $contents)) {
+                $this->warn("Method {$method} already exists in model — skipping.");
                 continue;
             }
 
@@ -392,15 +402,18 @@ class MakeModelCommand extends Command
 
             $modelFqn = Str::startsWith($model, ['App\\', '\\']) ? $model : 'App\\Models\\' . str_replace('/', '\\', $model);
 
-            $relationMethod = <<<PHP
+$indented = <<<PHP
 
     public function {$method}()
     {
         return \$this->{$type}({$modelFqn}::class);
     }
-
 PHP;
-            $contents = preg_replace('/}\s*$/', $relationMethod . "\n}", $contents);
+            $contents = preg_replace(
+                '/\n}\s*$/',
+                "\n\n{$indented}\n}",
+                $contents
+            );
         }
 
         $this->files->put($modelPath, $contents);
@@ -473,9 +486,9 @@ PHP;
         $inner = '';
         foreach ($values as $k => $v) {
             if ($associative) {
-                $inner .= "    '{$k}' => '{$v}',\n";
+                $inner .= "        '{$k}' => '{$v}',\n";
             } else {
-                $inner .= "    '{$v}',\n";
+                $inner .= "        '{$v}',\n";
             }
         }
         $inner = rtrim($inner, ",\n");
@@ -488,7 +501,7 @@ PHP;
             if ($useMethod) {
                 $castsInner = '';
                 foreach ($values as $k => $v) {
-                    $castsInner .= "    '{$k}' => '{$v}',\n";
+                    $castsInner .= "        '{$k}' => '{$v}',\n";
                 }
                 $castsInner = rtrim($castsInner, ",\n");
 
@@ -497,7 +510,7 @@ PHP;
     protected function casts(): array
     {
         return [
-        {$castsInner}
+{$castsInner}
         ];
     }
 PHP;
@@ -535,7 +548,7 @@ PHP;
 
             $pattern = '/\n\s*protected\s+\$' . preg_quote($prop, '/') . '\s*=\s*\[[^\]]*\][;\s]*/s';
             if (preg_match($pattern, $contents)) {
-                $contents = preg_replace($pattern, "\n    {$replacement}\n", $contents, 1);
+                $contents = preg_replace($pattern, "\n{$replacement}\n", $contents, 1);
             } else {
                 $contents = preg_replace(
                     '/(class\s+[^{]+\{)/',
@@ -561,6 +574,7 @@ PHP;
 
         $up = [];
         $down = [];
+        $hasMigrationChanges = false;
 
         /* --------------------------------------
         * Fields
@@ -575,11 +589,16 @@ PHP;
                 $upLine .= "\$table->decimal('{$f['name']}', 8, 2)";
             } else {
                 $upLine .= "\$table->{$f['type']}('{$f['name']}')";
+
+                if ($f['type'] === 'boolean' && !$f['nullable']) {
+                    $upLine .= "->default(true)";
+                }
             }
 
             $upLine .= "; }";
             $up[] = $upLine;
             $down[] = "            if (Schema::hasColumn('{$table}', '{$f['name']}')) { \$table->dropColumn('{$f['name']}'); }";
+            $hasMigrationChanges = true;
         }
 
         /* --------------------------------------
@@ -592,6 +611,7 @@ PHP;
                     . "\$table->foreignId('{$fk}')->constrained()->cascadeOnDelete(); }";
                 $down[] = "            if (Schema::hasColumn('{$table}', '{$fk}')) { "
                     . "\$table->dropForeign(['{$fk}']); \$table->dropColumn('{$fk}'); }";
+                $hasMigrationChanges = true;
             }
 
             if (in_array($r['type'], ['morphOne', 'morphMany'])) {
@@ -600,6 +620,13 @@ PHP;
                     . "\$table->morphs('{$morph}'); }";
                 $down[] = "            if (Schema::hasColumn('{$table}', '{$morph}_id')) { "
                     . "\$table->dropMorphs('{$morph}'); }";
+                $hasMigrationChanges = true;
+            }
+
+            if (in_array($r['type'], ['belongsToMany', 'morphToMany'])) {
+                $this->warn(
+                    "Pivot tables for {$r['type']} relationships are only generated when creating a new model."
+                );
             }
         }
 
@@ -615,10 +642,12 @@ PHP;
 
             $up[] = "            if ({$conditionCheck}) { \$table->index({$colList}, '{$indexName}'); }";
             $down[] = "            \$table->dropIndex('{$indexName}');";
+            $hasMigrationChanges = true;
         }
 
-        if (empty($up)) {
-            $this->info('Nothing to migrate.');
+        if (! $hasMigrationChanges) {
+            $this->warn('No schema-level changes detected. Migration was not created.');
+            $this->warn('Tip: Index-only or model-only updates do not generate migrations.');
             return;
         }
 
@@ -673,9 +702,10 @@ PHP;
             } else if ($f['type'] === 'decimal') {
                 $line .= "\$table->decimal('{$f['name']}', 8, 2)";
             } else {
-                $line .= "\$table->{$f['type']}('{$f['name']}')"
-                    . ($f['nullable'] ? '->nullable()' : '')
-                    . ($f['unique'] ? '->unique()' : '');
+                $line .= "\$table->{$f['type']}('{$f['name']}')";
+                if ($f['type'] === 'boolean' && !$f['nullable']) {
+                    $line .= "->default(true)";
+                }
             }
             $line .= ";";
             $lines[] = $line;
@@ -737,7 +767,7 @@ PHP;
         sort($pair);
         $pivot = implode('_', $pair);
 
-        $filename = date('Y_m_d_His') . "_create_{$pivot}_table.php";
+        $filename = now()->format('Y_m_d_His') . '_' . uniqid() . "_create_{$pivot}_table.php";
         $path = database_path('migrations/' . $filename);
 
         $ownFK = Str::snake(Str::singular($ownTable)) . '_id';
@@ -779,7 +809,6 @@ PHP;
         $hidden = [];
         $appends = [];
         $casts = [];
-        $guarded = [];
 
         foreach ($fields as $f) {
             if (!empty($f['fillable'])) {
@@ -794,19 +823,15 @@ PHP;
             if (!empty($f['cast'])) {
                 $casts[] = "'{$f['name']}' => '{$f['cast']}'";
             }
-            if (empty($f['fillable'])) {
-                $guarded[] = "'{$f['name']}'";
-            }
         }
 
-        $guardedArr = empty($fillable) ? "['*']" : "[]";
         $fillableStr = implode(', ', $fillable);
         $hiddenStr   = implode(', ', $hidden);
         $appendsStr  = implode(', ', $appends);
 
         $castsBlock = '';
         if (!empty($casts)) {
-            $castsInner = implode("\n    ", $casts);
+            $castsInner = implode("\n            ", $casts);
 
             if ($this->isLaravel11OrHigher()) {
                 $castsBlock = <<<PHP
@@ -857,8 +882,6 @@ class {$className} extends Model
 {
     protected \$fillable = [{$fillableStr}];
 
-    protected \$guarded = {$guardedArr};
-
     protected \$hidden = [{$hiddenStr}];
 
     protected \$appends = [{$appendsStr}];{$castsBlock}{$relationMethods}
@@ -880,5 +903,16 @@ PHP;
     {
         $laravel = app();
         return version_compare($laravel::VERSION, '11.0', '>=');
+    }
+
+    protected function modelHasMethod(string $method): bool
+    {
+        $modelPath = $this->getModelPath();
+        if (!$this->files->exists($modelPath)) {
+            return false;
+        }
+
+        $contents = $this->files->get($modelPath);
+        return preg_match('/public\s+function\s+' . preg_quote($method, '/') . '\s*\(/', $contents);
     }
 }
