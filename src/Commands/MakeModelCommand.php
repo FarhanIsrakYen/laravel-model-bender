@@ -612,10 +612,6 @@ PHP;
 
                 if ($f['type'] === 'boolean' && !$f['nullable']) {
                     $upLine .= "->default(true)";
-            }
-
-                if ($f['unique']) {
-                    $upLine .= "->unique()";
                 }
             }
 
