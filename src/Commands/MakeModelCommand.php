@@ -72,6 +72,12 @@ class MakeModelCommand extends Command
 
             $this->updateModelFile($modelPath, $className, $namespace, $this->fields, $this->relationships);
             $this->createAlterMigration($className, $this->fields, $this->relationships, $this->indexes);
+            foreach ($this->relationships as $r) {
+                if ($r['pivot']) {
+                    usleep(500000);
+                    $this->generatePivotMigration($className, $r['model'], $r['type']);
+                }
+            }
 
             $this->info("\n✔ Update completed. Review and run php artisan migrate.");
             return;
@@ -413,10 +419,10 @@ class MakeModelCommand extends Command
 
 $indented = <<<PHP
 
-public function {$method}()
-{
-    return \$this->{$type}({$modelFqn}::class);
-}
+    public function {$method}()
+    {
+        return \$this->{$type}({$modelFqn}::class);
+    }
 PHP;
             $contents = preg_replace(
                 '/\n}\s*$/',
@@ -517,7 +523,7 @@ PHP;
             if ($useMethod) {
                 $castsInner = '';
                 foreach ($values as $k => $v) {
-                    $castsInner .= "        '{$k}' => '{$v}',\n";
+                    $castsInner .= "            '{$k}' => '{$v}',\n";
                 }
                 $castsInner = rtrim($castsInner, ",\n");
 
@@ -605,11 +611,11 @@ PHP;
                 $upLine .= "\$table->{$f['type']}('{$f['name']}')";
 
                 if ($f['type'] === 'boolean' && !$f['nullable']) {
-                    $line .= "->default(true)";
+                    $upLine .= "->default(true)";
             }
 
                 if ($f['unique']) {
-                    $line .= "->unique()";
+                    $upLine .= "->unique()";
                 }
             }
 
@@ -632,6 +638,9 @@ PHP;
 
                 $down[] = "        if (Schema::hasColumn('{$table}', '{$fk}')) {\n            \$table->dropForeign(['{$fk}']);\n            \$table->dropColumn('{$fk}');\n        }";
 
+                $hasChanges = true;
+            }
+            if ($r['type'] === 'belongsToMany') {
                 $hasChanges = true;
             }
 
