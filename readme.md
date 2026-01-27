@@ -51,6 +51,7 @@ Run the artisan command with the model name (supports nested paths):
 ```bash
 php artisan make:model-interactive User
 ```
+or, for nested paths
 
 ```bash
 php artisan make:model-interactive Admin/User
@@ -58,6 +59,16 @@ php artisan make:model-interactive Admin/User
 - This will generate:
   - app/Models/Admin/User.php
   - Migration(s) under database/migrations
+
+🧭 Interactive Flow
+1️⃣ Define Fields
+  Once you run the make:model-interactive command, you’ll be prompted for:
+    - Field name
+    - Field type (string, integer, boolean, enum, etc.)
+    - Nullable
+    - Unique
+    - $fillable, $hidden, $appends
+    - $casts
 
 - You will be prompted to **define fields**:
   - Name, type, nullable, unique
