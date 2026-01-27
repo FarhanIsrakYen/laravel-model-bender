@@ -1,6 +1,22 @@
 # Laravel Model Bender
 
-A Laravel package to interactively generate Eloquent models with fields, enums, casts, attributes, relationships, and migrations.
+An interactive Artisan command to generate and update Laravel models **with fields, casts, relationships, indexes, and migrations** — safely and incrementally.
+
+This package is designed for **real projects**, not just scaffolding demos.
+
+---
+
+## ✨ Features
+
+- ✅ Interactive CLI wizard
+- ✅ Create **models + migrations**
+- ✅ Update existing models safely
+- ✅ Manage `$fillable`, `$hidden`, `$appends`, `$casts`
+- ✅ Relationship generation (incl. morphs)
+- ✅ Pivot table generation
+- ✅ Index creation with validation
+- ✅ Safe alter migrations (no breaking schema)
+- ✅ Warnings for duplicates & missing models
 
 ---
 
@@ -33,8 +49,15 @@ The package supports nested directories, so make sure your `app/Models` folder e
 Run the artisan command with the model name (supports nested paths):
 
 ```bash
-php artisan make:model-interactive Users/Product
+php artisan make:model-interactive User
 ```
+
+```bash
+php artisan make:model-interactive Admin/User
+```
+- This will generate:
+  - app/Models/Admin/User.php
+  - Migration(s) under database/migrations
 
 - You will be prompted to **define fields**:
   - Name, type, nullable, unique
