@@ -527,15 +527,13 @@ PHP;
                 }
                 $castsInner = rtrim($castsInner, ",\n");
 
-                $replacement = <<<PHP
-
-    protected function casts(): array
-    {
-        return [
-{$castsInner}
-        ];
-    }
-PHP;
+                $replacement =
+"\n    protected function casts(): array\n" .
+"    {\n" .
+"        return [\n" .
+"{$castsInner}\n" .
+"        ];\n" .
+"    }\n";
 
                 $contents = preg_replace('/\n\s*protected\s+\$casts\s*=\s*\[[^\]]*\][;\s]*\n/', "\n", $contents);
 
