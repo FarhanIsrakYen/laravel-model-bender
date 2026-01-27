@@ -6,6 +6,7 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Str;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Facades\Schema;
+use FarhanIsrakYen\LaravelModelMaker\Support\Psr12Formatter;
 
 class MakeModelCommand extends Command
 {
@@ -417,20 +418,21 @@ class MakeModelCommand extends Command
                 ? $model
                 : 'App\\Models\\' . str_replace('/', '\\', $model);
 
-$indented = <<<PHP
-
-    public function {$method}()
-    {
-        return \$this->{$type}({$modelFqn}::class);
-    }
-PHP;
+            $rawMethod = <<<PHP
+            public function {$method}()
+            {
+                return \$this->{$type}({$modelFqn}::class);
+            }
+            PHP;
+            $formatted = Psr12Formatter::formatMethod($rawMethod);
             $contents = preg_replace(
-                '/\n}\s*$/',
-                "\n\n{$indented}\n}",
+                '/(\n\s*\})\s*$/',
+                "{$formatted}$1",
                 $contents
             );
         }
 
+        $contents = Psr12Formatter::normalizeSpacing($contents);
         $this->files->put($modelPath, $contents);
         $this->info("✔ Model updated: {$modelPath}");
     }
@@ -506,11 +508,13 @@ PHP;
     protected function replaceArrayInModel(string $contents, string $prop, array $values, bool $associative = false): string
     {
         $inner = '';
+        $indent = '    ';
+        $arrayIndent = $indent . $indent;
         foreach ($values as $k => $v) {
             if ($associative) {
                 $inner .= "        '{$k}' => '{$v}',\n";
             } else {
-                $inner .= "        '{$v}',\n";
+                $inner .= "{$arrayIndent}'{$v}',\n";
             }
         }
         $inner = rtrim($inner, ",\n");
@@ -527,13 +531,16 @@ PHP;
                 }
                 $castsInner = rtrim($castsInner, ",\n");
 
-                $replacement =
-"\n    protected function casts(): array\n" .
-"    {\n" .
-"        return [\n" .
-"{$castsInner}\n" .
-"        ];\n" .
-"    }\n";
+                $rawMethod = <<<PHP
+                protected function casts(): array
+                {
+                    return [
+                {$castsInner}
+                    ];
+                }
+                PHP;
+
+                $replacement = Psr12Formatter::formatMethod($rawMethod);
 
                 $contents = preg_replace('/\n\s*protected\s+\$casts\s*=\s*\[[^\]]*\][;\s]*\n/', "\n", $contents);
 
@@ -697,6 +704,7 @@ PHP;
             };
             PHP;
 
+        $stub = Psr12Formatter::normalizeSpacing($stub);
         $this->files->put($path, $stub);
         $this->info("✔ Alter migration created: {$migrationName}");
     }
@@ -813,6 +821,7 @@ return new class extends Migration
 };
 PHP;
 
+        $stub = Psr12Formatter::normalizeSpacing($stub);
         $this->files->put($path, $stub);
         $this->info("✔ Pivot migration created: {$filename}");
     }
@@ -848,15 +857,16 @@ PHP;
             $castsInner = implode("\n            ", $casts);
 
             if ($this->isLaravel11OrHigher()) {
-                $castsBlock = <<<PHP
+                $rawMethod = <<<PHP
+                protected function casts(): array
+                {
+                    return [
+                        {$castsInner}
+                    ];
+                }
+                PHP;
 
-    protected function casts(): array
-    {
-        return [
-            {$castsInner}
-        ];
-    }
-PHP;
+                $castsBlock = Psr12Formatter::formatMethod($rawMethod);
             } else {
                 $castsBlock = <<<PHP
 
@@ -877,13 +887,14 @@ PHP;
                 ? $model
                 : 'App\\Models\\' . str_replace('/', '\\', $model);
 
-            $relationMethods .= <<<PHP
+            $rawMethod = <<<PHP
+            public function {$method}()
+            {
+                return \$this->{$type}({$modelFqn}::class);
+            }
+            PHP;
 
-    public function {$method}()
-    {
-        return \$this->{$type}({$modelFqn}::class);
-    }
-PHP;
+            $relationMethods .= Psr12Formatter::formatMethod($rawMethod);
         }
 
         return <<<PHP
