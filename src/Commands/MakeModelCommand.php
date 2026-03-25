@@ -6,10 +6,10 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Str;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Facades\Schema;
-use FarhanIsrakYen\LaravelModelMaker\Support\Psr12Formatter;
 
 class MakeModelCommand extends Command
 {
+    private const INDENT = ' ';
     protected $signature = 'make:model-interactive {name}';
     protected $description = 'Interactively generate a model with fields, enums, casts, attributes, relationships & migrations';
 
@@ -25,20 +25,46 @@ class MakeModelCommand extends Command
         $this->files = $files;
     }
 
+    protected function isLaravel11OrHigher(): bool
+    {
+        return version_compare(app()::VERSION, '11.0', '>=');
+    }
+
+    protected function getModelPath(): string
+    {
+        $raw = $this->argument('name');
+        $path = str_replace('\\', '/', $raw);
+        $className = Str::afterLast($path, '/');
+        $directory = Str::contains($path, '/') ? Str::beforeLast($path, '/') : '';
+        return app_path('Models/' . ($directory ? $directory . '/' : '') . $className . '.php');
+    }
+
+    protected function modelHasMethod(string $method): bool
+    {
+        $modelPath = $this->getModelPath();
+        if (!$this->files->exists($modelPath)) {
+            return false;
+        }
+
+        $contents = $this->files->get($modelPath);
+        return preg_match('/public\s+function\s+' . preg_quote($method, '/') . '\s*\(/', $contents);
+    }
+
     public function handle()
     {
-        $raw      = $this->argument('name');
-        $path     = str_replace('\\', '/', $raw);
+        echo "\n=== Model Interactive Generator ===\n";
+        $raw = $this->argument('name');
+        $path = str_replace('\\', '/', $raw);
         $className = Str::afterLast($path, '/');
         $directory = Str::contains($path, '/') ? Str::beforeLast($path, '/') : '';
         $namespace = 'App\\Models' . ($directory ? '\\' . str_replace('/', '\\', $directory) : '');
 
         $modelDir = app_path('Models/' . ($directory ? $directory . '/' : ''));
-        if (! $this->files->isDirectory($modelDir)) {
+        if (!$this->files->isDirectory($modelDir)) {
             $this->files->makeDirectory($modelDir, 0777, true);
         }
 
-        $modelPath   = $modelDir . $className . '.php';
+        $modelPath = $modelDir . $className . '.php';
         $modelExists = $this->files->exists($modelPath);
 
         if ($modelExists) {
@@ -98,7 +124,7 @@ class MakeModelCommand extends Command
             );
         }
 
-        if (! $this->confirm("\nGenerate model + migrations?", true)) {
+        if (!$this->confirm("\nGenerate model + migrations?", true)) {
             return $this->info('Cancelled.');
         }
 
@@ -138,9 +164,9 @@ class MakeModelCommand extends Command
             $contents = $this->files->get($modelPath);
 
             $fillable = $this->extractArrayFromModel($contents, 'fillable');
-            $casts    = array_keys($this->extractArrayFromModel($contents, 'casts'));
-            $hidden   = $this->extractArrayFromModel($contents, 'hidden');
-            $appends  = $this->extractArrayFromModel($contents, 'appends');
+            $casts = array_keys($this->extractArrayFromModel($contents, 'casts'));
+            $hidden = $this->extractArrayFromModel($contents, 'hidden');
+            $appends = $this->extractArrayFromModel($contents, 'appends');
 
             $existingFields = array_unique(array_merge($fillable, $casts, $hidden, $appends));
         }
@@ -155,7 +181,7 @@ class MakeModelCommand extends Command
 
             if (in_array($fname, $existingFields)) {
                 $this->warn("Field '{$fname}' is already defined in the existing model.");
-                if (! $this->confirm('Add it again anyway? (e.g. to update casts/fillable)', false)) {
+                if (!$this->confirm('Add it again anyway? (e.g. to update casts/fillable)', false)) {
                     $this->line("Skipping '{$fname}'.");
                     continue;
                 }
@@ -163,55 +189,75 @@ class MakeModelCommand extends Command
 
             if (in_array($fname, $addedThisSession)) {
                 $this->warn("You've already added '{$fname}' in this session.");
-                if (! $this->confirm('Add it again anyway?', false)) {
+                if (!$this->confirm('Add it again anyway?', false)) {
                     $this->line("Skipping duplicate '{$fname}'.");
                     continue;
                 }
             }
 
             $type = $this->choice('Field type', [
-                'string', 'text', 'integer', 'bigInteger', 'boolean',
-                'float', 'double', 'decimal', 'date', 'datetime', 'json', 'uuid', 'enum'
+                'string',
+                'text',
+                'integer',
+                'bigInteger',
+                'boolean',
+                'float',
+                'double',
+                'decimal',
+                'date',
+                'datetime',
+                'json',
+                'uuid',
+                'enum'
             ], 0);
 
             $enumValues = [];
             if ($type === 'enum') {
-                $rawEnum    = $this->ask('Enum values (comma separated)');
+                $rawEnum = $this->ask('Enum values (comma separated)');
                 $enumValues = array_values(array_filter(array_map('trim', explode(',', $rawEnum))));
             }
 
-            $nullable      = $this->confirm('Nullable?', false);
-            $unique        = $this->confirm('Unique?', false);
-            $defaultFillable = ! in_array($fname, $existingFields);
+            $nullable = $this->confirm('Nullable?', false);
+            $unique = $this->confirm('Unique?', false);
+            $defaultFillable = !in_array($fname, $existingFields);
 
             $addToFillable = $this->confirm('Add to $fillable?', $defaultFillable);
-            $addToHidden   = $this->confirm('Add to $hidden?', false);
-            $addToAppends  = $this->confirm('Add to $appends?', false);
+            $addToHidden = $this->confirm('Add to $hidden?', false);
+            $addToAppends = $this->confirm('Add to $appends?', false);
 
-            $addCast  = $this->confirm('Add to $casts?', ! isset($casts[$fname]));
+            $addCast = $this->confirm('Add to $casts?', !isset($casts[$fname]));
             $castType = null;
 
             if ($addCast) {
                 $castType = $this->choice('Cast type', [
-                    'int', 'real', 'float', 'double', 'string', 'bool',
-                    'array', 'json', 'date', 'datetime', 'collection'
+                    'int',
+                    'real',
+                    'float',
+                    'double',
+                    'string',
+                    'bool',
+                    'array',
+                    'json',
+                    'date',
+                    'datetime',
+                    'collection'
                 ], 0);
             }
 
-            if ($type === 'boolean' && ! $nullable) {
+            if ($type === 'boolean' && !$nullable) {
                 $this->line("<fg=yellow>Tip: Consider adding ->default(true) in migration for non-empty tables.</>");
             }
 
             $this->fields[] = [
-                'name'      => $fname,
-                'type'      => $type,
-                'enum'      => $enumValues,
-                'nullable'  => $nullable,
-                'unique'    => $unique,
-                'fillable'  => $addToFillable,
-                'hidden'    => $addToHidden,
-                'append'    => $addToAppends,
-                'cast'      => $castType,
+                'name' => $fname,
+                'type' => $type,
+                'enum' => $enumValues,
+                'nullable' => $nullable,
+                'unique' => $unique,
+                'fillable' => $addToFillable,
+                'hidden' => $addToHidden,
+                'append' => $addToAppends,
+                'cast' => $castType,
             ];
 
             $addedThisSession[] = $fname;
@@ -253,24 +299,30 @@ class MakeModelCommand extends Command
                 : 'App\\Models\\' . str_replace('/', '\\', $relModelRaw);
 
             $modelShortName = class_basename($relModel);
-            $expectedPath   = app_path('Models/' . str_replace(['App\\Models\\', '\\'], ['', '/'], $relModel) . '.php');
+            $expectedPath = app_path('Models/' . str_replace(['App\\Models\\', '\\'], ['', '/'], $relModel) . '.php');
 
             $modelExists = $this->files->exists($expectedPath);
 
-            if (! $modelExists) {
+            if (!$modelExists) {
                 $this->warn("Warning: Model '{$modelShortName}' does not exist at:");
                 $this->line(" {$expectedPath}");
                 $this->line("<fg=yellow>It may cause errors if the model is not created later.</>");
 
-                if (! $this->confirm("Continue anyway? (yes if you'll create the model soon)", true)) {
+                if (!$this->confirm("Continue anyway? (yes if you'll create the model soon)", true)) {
                     $this->line("Skipping this relationship.");
                     continue;
                 }
             }
 
             $relType = $this->choice('Relation type', [
-                'hasOne', 'hasMany', 'belongsTo', 'belongsToMany',
-                'morphOne', 'morphMany', 'morphTo', 'morphToMany'
+                'hasOne',
+                'hasMany',
+                'belongsTo',
+                'belongsToMany',
+                'morphOne',
+                'morphMany',
+                'morphTo',
+                'morphToMany'
             ], 0);
 
             $createPivot = false;
@@ -279,9 +331,9 @@ class MakeModelCommand extends Command
             }
 
             $this->relationships[] = [
-                'name'  => $relName,
+                'name' => $relName,
                 'model' => $relModel,
-                'type'  => $relType,
+                'type' => $relType,
                 'pivot' => $createPivot,
             ];
 
@@ -296,7 +348,7 @@ class MakeModelCommand extends Command
 
         while ($this->confirm('Add an index?', false)) {
             $colsInput = trim($this->ask('Columns for index (comma separated, e.g. otp_code, otp_expires_at)'));
-            $columns   = array_values(array_filter(array_map('trim', explode(',', $colsInput))));
+            $columns = array_values(array_filter(array_map('trim', explode(',', $colsInput))));
 
             if (empty($columns)) {
                 $this->warn('No valid columns provided — skipping.');
@@ -305,14 +357,14 @@ class MakeModelCommand extends Command
 
             $unknownColumns = array_diff($columns, $knownColumns);
 
-            if (! empty($unknownColumns)) {
+            if (!empty($unknownColumns)) {
                 $this->warn("The following columns are not recognized:");
                 foreach ($unknownColumns as $col) {
                     $this->line(" • {$col}");
                 }
                 $this->line("<fg=yellow>They might not exist in the model or database yet.</>");
 
-                if (! $this->confirm('Create the index anyway? (useful if columns will be added later)', false)) {
+                if (!$this->confirm('Create the index anyway? (useful if columns will be added later)', false)) {
                     $this->line('Skipping this index.');
                     continue;
                 }
@@ -328,18 +380,18 @@ class MakeModelCommand extends Command
         $known = array_column($this->fields, 'name');
 
         $modelPath = $this->getModelPath();
-        if (! $this->files->exists($modelPath)) {
+        if (!$this->files->exists($modelPath)) {
             return array_unique($known);
         }
 
-        $raw       = $this->argument('name');
-        $path      = str_replace('\\', '/', $raw);
+        $raw = $this->argument('name');
+        $path = str_replace('\\', '/', $raw);
         $className = Str::afterLast($path, '/');
-        $table     = Str::snake(Str::pluralStudly($className));
+        $table = Str::snake(Str::pluralStudly($className));
 
-        $migrations     = $this->files->glob(database_path("migrations/*_create_{$table}_table.php"));
+        $migrations = $this->files->glob(database_path("migrations/*_create_{$table}_table.php"));
         $alterMigrations = $this->files->glob(database_path("migrations/*_update_{$table}_table.php"));
-        $allMigrations  = array_merge($migrations, $alterMigrations);
+        $allMigrations = array_merge($migrations, $alterMigrations);
         sort($allMigrations);
 
         foreach ($allMigrations as $migrationPath) {
@@ -362,7 +414,7 @@ class MakeModelCommand extends Command
         }
 
         $contents = $this->files->get($modelPath);
-        $known    = array_merge(
+        $known = array_merge(
             $known,
             $this->extractArrayFromModel($contents, 'fillable'),
             array_keys($this->extractArrayFromModel($contents, 'casts')),
@@ -378,29 +430,29 @@ class MakeModelCommand extends Command
         $contents = $this->files->get($modelPath);
 
         $fillable = $this->extractArrayFromModel($contents, 'fillable');
-        $casts    = $this->extractArrayFromModel($contents, 'casts');
-        $hidden   = $this->extractArrayFromModel($contents, 'hidden');
-        $appends  = $this->extractArrayFromModel($contents, 'appends');
+        $casts = $this->extractArrayFromModel($contents, 'casts');
+        $hidden = $this->extractArrayFromModel($contents, 'hidden');
+        $appends = $this->extractArrayFromModel($contents, 'appends');
 
         foreach ($newFields as $f) {
-            if ($f['fillable'] && ! in_array($f['name'], $fillable)) {
+            if ($f['fillable'] && !in_array($f['name'], $fillable)) {
                 $fillable[] = $f['name'];
             }
-            if ($f['cast'] && ! array_key_exists($f['name'], $casts)) {
+            if ($f['cast'] && !array_key_exists($f['name'], $casts)) {
                 $casts[$f['name']] = $f['cast'];
             }
-            if ($f['hidden'] && ! in_array($f['name'], $hidden)) {
+            if ($f['hidden'] && !in_array($f['name'], $hidden)) {
                 $hidden[] = $f['name'];
             }
-            if ($f['append'] && ! in_array($f['name'], $appends)) {
+            if ($f['append'] && !in_array($f['name'], $appends)) {
                 $appends[] = $f['name'];
             }
         }
 
         $contents = $this->replaceArrayInModel($contents, 'fillable', $fillable);
-        $contents = $this->replaceArrayInModel($contents, 'casts', $casts, true);
         $contents = $this->replaceArrayInModel($contents, 'hidden', $hidden);
         $contents = $this->replaceArrayInModel($contents, 'appends', $appends);
+        $contents = $this->replaceArrayInModel($contents, 'casts', $casts, true);
 
         foreach ($newRelationships as $r) {
             $method = $r['name'];
@@ -412,27 +464,26 @@ class MakeModelCommand extends Command
             }
 
             $model = $r['model'];
-            $type  = $r['type'];
+            $type = $r['type'];
 
             $modelFqn = Str::startsWith($model, ['App\\', '\\'])
                 ? $model
                 : 'App\\Models\\' . str_replace('/', '\\', $model);
 
-            $rawMethod = <<<PHP
-            public function {$method}()
-            {
-                return \$this->{$type}({$modelFqn}::class);
-            }
-            PHP;
-            $formatted = Psr12Formatter::formatMethod($rawMethod);
+            $rawMethod =
+                "\n" .
+                "    public function {$method}()\n" .
+                "    {\n" .
+                "        return \$this->{$type}({$modelFqn}::class);\n" .
+                "    }";
+
             $contents = preg_replace(
-                '/(\n\s*\})\s*$/',
-                "{$formatted}$1",
+                '/(\s*\})\s*$/',
+                "\n{$rawMethod}$1",
                 $contents
             );
         }
 
-        $contents = Psr12Formatter::normalizeSpacing($contents);
         $this->files->put($modelPath, $contents);
         $this->info("✔ Model updated: {$modelPath}");
     }
@@ -446,7 +497,7 @@ class MakeModelCommand extends Command
                     return [];
                 }
 
-                $pairs  = preg_split('/,(?![^\[]*\])/', $inner);
+                $pairs = preg_split('/,(?![^\[]*\])/', $inner);
                 $result = [];
 
                 foreach ($pairs as $p) {
@@ -470,7 +521,7 @@ class MakeModelCommand extends Command
             }
 
             if ($prop === 'casts') {
-                $pairs  = preg_split('/,(?![^\[]*\])/m', $inner);
+                $pairs = preg_split('/,(?![^\[]*\])/m', $inner);
                 $result = [];
 
                 foreach ($pairs as $p) {
@@ -508,49 +559,47 @@ class MakeModelCommand extends Command
     protected function replaceArrayInModel(string $contents, string $prop, array $values, bool $associative = false): string
     {
         $inner = '';
-        $indent = '    ';
-        $arrayIndent = $indent . $indent;
         foreach ($values as $k => $v) {
             if ($associative) {
                 $inner .= "        '{$k}' => '{$v}',\n";
             } else {
-                $inner .= "{$arrayIndent}'{$v}',\n";
+                $inner .= "        '{$v}',\n";
             }
         }
-        $inner = rtrim($inner, ",\n");
+        $inner = rtrim($inner, "\n");
 
         if ($prop === 'casts') {
-            $isLaravel11   = $this->isLaravel11OrHigher();
+            $isLaravel11 = $this->isLaravel11OrHigher();
             $hasCastsMethod = preg_match('/protected\s+function\s+casts\s*\(\)\s*:\s*array/', $contents);
-            $useMethod     = $isLaravel11 || $hasCastsMethod;
+            $useMethod = $isLaravel11 || $hasCastsMethod;
 
             if ($useMethod) {
-                $castsInner = '';
-                foreach ($values as $k => $v) {
-                    $castsInner .= "            '{$k}' => '{$v}',\n";
-                }
-                $castsInner = rtrim($castsInner, ",\n");
+                $castsInner = implode(
+                    ",\n",
+                    array_map(
+                        fn($k, $v) => "            '{$k}' => '{$v}'",
+                        array_keys($values),
+                        $values
+                    )
+                );
 
-                $rawMethod = <<<PHP
-                protected function casts(): array
-                {
-                    return [
-                {$castsInner}
-                    ];
-                }
-                PHP;
+                $rawMethod =
+                    "    protected function casts(): array\n" .
+                    "    {\n" .
+                    "        return [\n" .
+                    $castsInner . "\n" .
+                    "        ];\n" .
+                    "    }";
 
-                $replacement = Psr12Formatter::formatMethod($rawMethod);
-
-                $contents = preg_replace('/\n\s*protected\s+\$casts\s*=\s*\[[^\]]*\][;\s]*\n/', "\n", $contents);
+                $contents = preg_replace('/\n\s*protected\s+\$casts\s*=\s*\[[^\]]*\]\s*;\s*\n/', "\n", $contents);
 
                 if ($hasCastsMethod) {
-                    $pattern  = '/\n\s*protected\s+function\s+casts\s*\(\)\s*:\s*array\s*\{[^}]*\}/s';
-                    $contents = preg_replace($pattern, $replacement, $contents);
+                    $pattern = '/\n\s*protected\s+function\s+casts\s*\(\)\s*:\s*array\s*\{[^}]*return\s*\[[^\]]*\]\s*;\s*\}/s';
+                    $contents = preg_replace($pattern, "\n\n" . $rawMethod, $contents, 1);
                 } else {
                     $contents = preg_replace(
                         '/(class\s+[^{]+\{)/',
-                        "$1\n\n{$replacement}\n",
+                        "$1\n\n" . $rawMethod,
                         $contents,
                         1
                     );
@@ -558,15 +607,15 @@ class MakeModelCommand extends Command
             } else {
                 $replacement = "    protected \$casts = [\n{$inner}\n    ];";
 
-                $contents = preg_replace('/\n\s*protected\s+function\s+casts[^}]*\}\n/', "\n", $contents);
+                $contents = preg_replace('/\n\s*protected\s+function\s+casts\s*\(\)\s*:\s*array\s*\{[^}]*return\s*\[[^\]]*\]\s*;\s*\}\s*\n/s', "\n", $contents);
 
-                $pattern = '/\n\s*protected\s+\$casts\s*=\s*\[[^\]]*\][;\s]*/s';
+                $pattern = '/\s*protected\s+\$casts\s*=\s*\[[^\]]*\]\s*;/s';
                 if (preg_match($pattern, $contents)) {
-                    $contents = preg_replace($pattern, "\n    {$replacement}\n", $contents, 1);
+                    $contents = preg_replace($pattern, "\n" . $replacement, $contents, 1);
                 } else {
                     $contents = preg_replace(
                         '/(class\s+[^{]+\{)/',
-                        "$1\n\n    {$replacement}\n",
+                        "$1\n\n" . $replacement,
                         $contents,
                         1
                     );
@@ -575,13 +624,13 @@ class MakeModelCommand extends Command
         } else {
             $replacement = "    protected \${$prop} = [\n{$inner}\n    ];";
 
-            $pattern = '/\n\s*protected\s+\$' . preg_quote($prop, '/') . '\s*=\s*\[[^\]]*\][;\s]*/s';
+            $pattern = '/\s*protected\s+\$' . preg_quote($prop, '/') . '\s*=\s*\[[^\]]*\]\s*;/s';
             if (preg_match($pattern, $contents)) {
-                $contents = preg_replace($pattern, "\n{$replacement}\n", $contents, 1);
+                $contents = preg_replace($pattern, "\n" . $replacement, $contents, 1);
             } else {
                 $contents = preg_replace(
                     '/(class\s+[^{]+\{)/',
-                    "$1\n\n    {$replacement}\n",
+                    "$1\n\n" . $replacement,
                     $contents,
                     1
                 );
@@ -599,45 +648,46 @@ class MakeModelCommand extends Command
     ): void {
         $table = Str::snake(Str::pluralStudly($className));
 
-        $up   = [];
+        $up = [];
         $down = [];
         $hasChanges = false;
 
-        // Fields
         foreach ($newFields as $f) {
-            $upLine = "            if (!Schema::hasColumn('{$table}', '{$f['name']}')) { ";
+            $colDef = '';
 
             if ($f['type'] === 'enum') {
                 $vals = "['" . implode("','", $f['enum']) . "']";
-                $upLine .= "\$table->enum('{$f['name']}', {$vals})";
+                $colDef = "\$table->enum('{$f['name']}', {$vals})";
             } else if ($f['type'] === 'decimal') {
-                $upLine .= "\$table->decimal('{$f['name']}', 8, 2)";
+                $colDef = "\$table->decimal('{$f['name']}', 8, 2)";
             } else {
-                $upLine .= "\$table->{$f['type']}('{$f['name']}')";
+                $colDef = "\$table->{$f['type']}('{$f['name']}')";
 
                 if ($f['type'] === 'boolean' && !$f['nullable']) {
-                    $upLine .= "->default(true)";
+                    $colDef .= "->default(true)";
                 }
             }
 
-            if ($f['unique']) {
-                $upLine .= "->unique()";
+            if ($f['nullable']) {
+                $colDef .= "->nullable()";
             }
-            $upLine .= "; }";
-            $up[] = $upLine;
+            if ($f['unique']) {
+                $colDef .= "->unique()";
+            }
 
-            $down[] = "        if (Schema::hasColumn('{$table}', '{$f['name']}')) {\n            \$table->dropColumn('{$f['name']}');\n        }";
+            $up[] = "            if (!Schema::hasColumn('{$table}', '{$f['name']}')) {\n                {$colDef};\n            }\n";
+
+            $down[] = "            if (Schema::hasColumn('{$table}', '{$f['name']}')) {\n                \$table->dropColumn('{$f['name']}');\n            }\n";
 
             $hasChanges = true;
         }
 
-        // Relationships (foreign keys & morphs)
         foreach ($newRelationships as $r) {
             if ($r['type'] === 'belongsTo') {
                 $fk = Str::snake(class_basename($r['model'])) . '_id';
-                $up[] = "        if (!Schema::hasColumn('{$table}', '{$fk}')) {\n            \$table->foreignId('{$fk}')->constrained()->cascadeOnDelete();\n        }";
+                $up[] = "            if (!Schema::hasColumn('{$table}', '{$fk}')) {\n                \$table->foreignId('{$fk}')->constrained()->cascadeOnDelete();\n            }\n";
 
-                $down[] = "        if (Schema::hasColumn('{$table}', '{$fk}')) {\n            \$table->dropForeign(['{$fk}']);\n            \$table->dropColumn('{$fk}');\n        }";
+                $down[] = "            if (Schema::hasColumn('{$table}', '{$fk}')) {\n                \$table->dropForeign(['{$fk}']);\n                \$table->dropColumn('{$fk}');\n            }\n";
 
                 $hasChanges = true;
             }
@@ -647,64 +697,62 @@ class MakeModelCommand extends Command
 
             if (in_array($r['type'], ['morphOne', 'morphMany'])) {
                 $morph = Str::snake($r['name']);
-                $up[]   = "        if (!Schema::hasColumn('{$table}', '{$morph}_id')) {\n            \$table->morphs('{$morph}');\n        }";
+                $up[] = "            if (!Schema::hasColumn('{$table}', '{$morph}_id')) {\n                \$table->morphs('{$morph}');\n            }\n";
 
-                $down[] = "        if (Schema::hasColumn('{$table}', '{$morph}_id')) {\n            \$table->dropMorphs('{$morph}');\n        }";
+                $down[] = "            if (Schema::hasColumn('{$table}', '{$morph}_id')) {\n                \$table->dropMorphs('{$morph}');\n            }\n";
 
                 $hasChanges = true;
             }
         }
 
-        // Indexes
         foreach ($indexes as $cols) {
-            $colList    = "['" . implode("','", $cols) . "']";
-            $indexName  = $table . '_' . implode('_', $cols) . '_index';
+            $colList = "['" . implode("','", $cols) . "']";
+            $indexName = $table . '_' . implode('_', $cols) . '_index';
             $conditions = array_map(fn($col) => "Schema::hasColumn('{$table}', '{$col}')", $cols);
-            $condition  = implode(' && ', $conditions);
+            $condition = implode(' && ', $conditions);
 
-            $up[]   = "        if ({$condition}) {\n            \$table->index({$colList}, '{$indexName}');\n        }";
-            $down[] = "        \$table->dropIndex('{$indexName}');";
+            $up[] = "            if ({$condition}) {\n                \$table->index({$colList}, '{$indexName}');\n            }\n";
+            $down[] = "            if (Schema::hasTable('{$table}')) {\n                \$table->dropIndex('{$indexName}');\n            }\n";
 
             $hasChanges = true;
         }
 
-        if (! $hasChanges) {
+        if (!$hasChanges) {
             $this->info('Nothing to migrate.');
             return;
         }
 
         $migrationName = date('Y_m_d_His') . '_update_' . $table . '_table.php';
-        $path          = database_path('migrations/' . $migrationName);
+        $path = database_path('migrations/' . $migrationName);
 
-        $upBody   = implode("\n", $up);
+        $upBody = implode("\n", $up);
         $downBody = implode("\n", array_reverse($down));
 
         $stub = <<<PHP
-            <?php
+<?php
 
-            use Illuminate\\Database\\Migrations\\Migration;
-            use Illuminate\\Database\\Schema\\Blueprint;
-            use Illuminate\\Support\\Facades\\Schema;
+use Illuminate\\Database\\Migrations\\Migration;
+use Illuminate\\Database\\Schema\\Blueprint;
+use Illuminate\\Support\\Facades\\Schema;
 
-            return new class extends Migration
-            {
-                public function up(): void
-                {
-                    Schema::table('{$table}', function (Blueprint \$table) {
-            {$upBody}
-                    });
-                }
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::table('{$table}', function (Blueprint \$table) {
+{$upBody}
+        });
+    }
 
-                public function down(): void
-                {
-                    Schema::table('{$table}', function (Blueprint \$table) {
-            {$downBody}
-                    });
-                }
-            };
-            PHP;
+    public function down(): void
+    {
+        Schema::table('{$table}', function (Blueprint \$table) {
+{$downBody}
+        });
+    }
+};
+PHP;
 
-        $stub = Psr12Formatter::normalizeSpacing($stub);
         $this->files->put($path, $stub);
         $this->info("✔ Alter migration created: {$migrationName}");
     }
@@ -724,9 +772,13 @@ class MakeModelCommand extends Command
                 $line .= "\$table->decimal('{$f['name']}', 8, 2)";
             } else {
                 $line .= "\$table->{$f['type']}('{$f['name']}')";
-                if ($f['type'] === 'boolean' && ! $f['nullable']) {
+                if ($f['type'] === 'boolean' && !$f['nullable']) {
                     $line .= "->default(true)";
                 }
+            }
+
+            if ($f['nullable']) {
+                $line .= "->nullable()";
             }
 
             $line .= ";";
@@ -736,20 +788,20 @@ class MakeModelCommand extends Command
         foreach ($relationships as $r) {
             if ($r['type'] === 'belongsTo') {
                 $relatedTable = Str::snake(Str::pluralStudly(class_basename($r['model'])));
-                $fk           = Str::snake(class_basename($r['model'])) . '_id';
-                $lines[]      = "            \$table->foreignId('{$fk}')->constrained('{$relatedTable}')->cascadeOnDelete();";
+                $fk = Str::snake(class_basename($r['model'])) . '_id';
+                $lines[] = "            \$table->foreignId('{$fk}')->constrained('{$relatedTable}')->cascadeOnDelete();";
             }
 
             if (in_array($r['type'], ['morphOne', 'morphMany'])) {
                 $morphName = Str::snake($r['name']);
-                $lines[]   = "            \$table->morphs('{$morphName}');";
+                $lines[] = "            \$table->morphs('{$morphName}');";
             }
         }
 
         foreach ($indexes as $cols) {
-            $colList   = "['" . implode("','", $cols) . "']";
+            $colList = "['" . implode("','", $cols) . "']";
             $indexName = $table . '_' . implode('_', $cols) . '_index';
-            $lines[]   = "            \$table->index({$colList}, '{$indexName}');";
+            $lines[] = "            \$table->index({$colList}, '{$indexName}');";
         }
 
         $schema = implode("\n", $lines);
@@ -782,7 +834,7 @@ PHP;
 
     protected function generatePivotMigration(string $ownClass, string $relatedModel, string $relationType)
     {
-        $ownTable     = Str::snake(Str::pluralStudly($ownClass));
+        $ownTable = Str::snake(Str::pluralStudly($ownClass));
         $relatedTable = Str::snake(Str::pluralStudly(class_basename($relatedModel)));
 
         $pair = [Str::snake(Str::singular($ownTable)), Str::snake(Str::singular($relatedTable))];
@@ -790,9 +842,9 @@ PHP;
         $pivot = implode('_', $pair);
 
         $filename = now()->format('Y_m_d_His') . '_' . uniqid() . "_create_{$pivot}_table.php";
-        $path     = database_path('migrations/' . $filename);
+        $path = database_path('migrations/' . $filename);
 
-        $ownFK     = Str::snake(Str::singular($ownTable)) . '_id';
+        $ownFK = Str::snake(Str::singular($ownTable)) . '_id';
         $relatedFK = Str::snake(Str::singular($relatedTable)) . '_id';
 
         $stub = <<<PHP
@@ -821,7 +873,6 @@ return new class extends Migration
 };
 PHP;
 
-        $stub = Psr12Formatter::normalizeSpacing($stub);
         $this->files->put($path, $stub);
         $this->info("✔ Pivot migration created: {$filename}");
     }
@@ -829,9 +880,9 @@ PHP;
     protected function buildModel(string $namespace, string $className, array $fields, array $relationships): string
     {
         $fillable = [];
-        $hidden   = [];
-        $appends  = [];
-        $casts    = [];
+        $hidden = [];
+        $appends = [];
+        $casts = [];
 
         foreach ($fields as $f) {
             if ($f['fillable']) {
@@ -849,25 +900,20 @@ PHP;
         }
 
         $fillableStr = implode(', ', $fillable);
-        $hiddenStr   = implode(', ', $hidden);
-        $appendsStr  = implode(', ', $appends);
+        $hiddenStr = implode(', ', $hidden);
+        $appendsStr = implode(', ', $appends);
 
         $castsBlock = '';
-        if (! empty($casts)) {
-            $castsInner = implode("\n            ", $casts);
-
+        if (!empty($casts)) {
             if ($this->isLaravel11OrHigher()) {
-                $rawMethod = <<<PHP
-                protected function casts(): array
-                {
-                    return [
-                        {$castsInner}
-                    ];
-                }
-                PHP;
-
-                $castsBlock = Psr12Formatter::formatMethod($rawMethod);
+                $castsBlock = "\n\n    protected function casts(): array\n" .
+                    "    {\n" .
+                    "        return [\n" .
+                    "            " . implode(",\n            ", $casts) . "\n" .
+                    "        ];\n" .
+                    "    }";
             } else {
+                $castsInner = implode("\n        ", $casts);
                 $castsBlock = <<<PHP
 
     protected \$casts = [
@@ -880,21 +926,19 @@ PHP;
         $relationMethods = '';
         foreach ($relationships as $r) {
             $method = $r['name'];
-            $model  = $r['model'];
-            $type   = $r['type'];
+            $model = $r['model'];
+            $type = $r['type'];
 
             $modelFqn = Str::startsWith($model, ['App\\', '\\'])
                 ? $model
                 : 'App\\Models\\' . str_replace('/', '\\', $model);
 
-            $rawMethod = <<<PHP
-            public function {$method}()
-            {
-                return \$this->{$type}({$modelFqn}::class);
-            }
-            PHP;
+            $rawMethod = "\n\n    public function {$method}()\n" .
+                "    {\n" .
+                "        return \$this->{$type}({$modelFqn}::class);\n" .
+                "    }";
 
-            $relationMethods .= Psr12Formatter::formatMethod($rawMethod);
+            $relationMethods .= $rawMethod;
         }
 
         return <<<PHP
@@ -913,33 +957,5 @@ class {$className} extends Model
     protected \$appends = [{$appendsStr}];{$castsBlock}{$relationMethods}
 }
 PHP;
-    }
-
-    protected function getModelPath(): string
-    {
-        $raw      = $this->argument('name');
-        $path     = str_replace('\\', '/', $raw);
-        $className = Str::afterLast($path, '/');
-        $directory = Str::contains($path, '/') ? Str::beforeLast($path, '/') : '';
-
-        $modelDir = app_path('Models/' . ($directory ? $directory . '/' : ''));
-        return $modelDir . $className . '.php';
-    }
-
-    protected function isLaravel11OrHigher(): bool
-    {
-        $laravel = app();
-        return version_compare($laravel::VERSION, '11.0', '>=');
-    }
-
-    protected function modelHasMethod(string $method): bool
-    {
-        $modelPath = $this->getModelPath();
-        if (!$this->files->exists($modelPath)) {
-            return false;
-        }
-
-        $contents = $this->files->get($modelPath);
-        return preg_match('/public\s+function\s+' . preg_quote($method, '/') . '\s*\(/', $contents);
     }
 }
